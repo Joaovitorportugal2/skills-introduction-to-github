@@ -1,0 +1,156 @@
+configs/
+mkdir my-app
+cd my-app
+npm init -y
+npm install express mysql2 redis dotenv http-errors node-cache
+Arquiv.env/
+DB_HOST=localhost
+DB_USER=root
+DB_PASSWORD=senha
+DB_NAME=meubanco
+REDIS_HOST=localhost
+REDIS_PORT=6379
+CACHE_TTL=30
+configs/db.js 
+onst mysql = require('mysql2');
+
+const pool = mysql.createPool({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+});
+
+module.exports = pool.promise();
+configs/redis.js
+const redis = require('redis');
+
+const client = redis.createClient({
+  host: process.env.REDIS_HOST,
+  port: process.env.REDIS_PORT,
+});
+
+client.on('error', (err) => {
+  console.error('Erro no Redis:', err);
+});
+
+module.exports = client;
+models/clienteModel.js
+const db = require('../configs/db');
+
+const Cliente = {
+  getAll: async () => {
+    const [rows] = await db.execute('SELECT * FROM clientes');
+    return rows;
+  },
+  // Métodos para POST, PUT, DELETE...
+};
+
+module.exports = Cliente;
+models/produtoModel.js
+const db = require('../configs/db');
+
+const Produto = {
+  getAll: async () => {
+    const [rows] = await db.execute('SELECT * FROM produtos');
+    return rows;
+  },
+  // Métodos para POST, PUT, DELETE...
+};
+
+module.exports = Produto;
+controllers/clientesController.js
+const Cliente = require('../models/clienteModel');
+const cache = require('../configs/redis');
+const httpErrors = require('http-errors');
+
+const getClientes = async (req, res, next) => {
+  const cacheKey = 'clientes';
+  cache.get(cacheKey, async (err, data) => {
+    if (err) return next(httpErrors(500, 'Erro ao acessar o cache'));
+    if (data) {
+      console.log('Dados retornados do cache');
+      return res.json(JSON.parse(data));
+    }
+    try {
+      const clientes = await Cliente.getAll();
+      cache.setex(cacheKey, process.env.CACHE_TTL, JSON.stringify(clientes));
+      console.log('Dados retornados do banco de dados');
+      res.json(clientes);
+    } catch (error) {
+      next(httpErrors(500, 'Erro ao acessar o banco de dados'));
+    }
+  });
+};
+
+// Métodos para POST, PUT, DELETE...
+
+module.exports = { getClientes };
+controllers/produtosController.js
+const Produto = require('../models/produtoModel');
+
+const getProdutos = async (req, res, next) => {
+  try {
+    const produtos = await Produto.getAll();
+    res.json(produtos);
+  } catch (error) {
+    next(httpErrors(500, 'Erro ao acessar o banco de dados'));
+  }
+};
+
+// Métodos para POST, PUT, DELETE...
+
+module.exports = { getProdutos };
+middlewares/cacheMiddleware.js
+const cache = require('../configs/redis');
+
+const invalidateCache = (req, res, next) => {
+  const cacheKey = 'clientes';
+  cache.del(cacheKey, (err, response) => {
+    if (err) return next(err);
+    console.log('Cache invalidado');
+    next();
+  });
+};
+
+module.exports = { invalidateCache };
+routes/clientesRoutes.js
+const express = require('express');
+const router = express.Router();
+const clientesController = require('../controllers/clientesController');
+const { invalidateCache } = require('../middlewares/cacheMiddleware');
+
+router.get('/', clientesController.getClientes);
+router.post('/', invalidateCache, clientesController.createCliente);
+router.put('/:id', invalidateCache, clientesController.updateCliente);
+router.delete('/:id', invalidateCache, clientesController.deleteCliente);
+
+module.exports = router;
+routes/produtosRoutes.js
+const express = require('express');
+const router = express.Router();
+const produtosController = require('../controllers/produtosController');
+
+router.get('/', produtosController.getProdutos);
+router.post('/', produtosController.createProduto);
+router.put('/:id', produtosController.updateProduto);
+router.delete('/:id', produtosController.deleteProduto);
+
+module.exports = router;
+app.js
+const express = require('express');
+const dotenv = require('dotenv');
+const clientesRoutes = require('./routes/clientesRoutes');
+const produtosRoutes = require('./routes/produtosRoutes');
+
+dotenv.config();
+
+const app = express();
+app.use(express.json());
+
+app.use('/clientes', clientesRoutes);
+app.use('/produtos', produtosRoutes);
+
+app.listen(3000, () => {
+  console.log('Servidor rodando na porta 3000');
+});
